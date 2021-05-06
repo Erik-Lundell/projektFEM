@@ -186,6 +186,13 @@ pdesetbd(1,...
 '1',...
 '0')
 
+% Mesh generation:
+setappdata(pde_fig,'Hgrad',1.3);
+setappdata(pde_fig,'refinemethod','regular');
+setappdata(pde_fig,'jiggle',char('on','mean',''));
+setappdata(pde_fig,'MesherVersion','preR2013a');
+pdetool('initmesh')
+
 % PDE coefficients:
 pdeseteq(1,...
 '1.0',...

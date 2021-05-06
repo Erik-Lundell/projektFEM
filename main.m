@@ -25,6 +25,4 @@ for i = 1:size(er,2)
 T_inf = 40; 
 T_c = 20;
 
-%
-
 
