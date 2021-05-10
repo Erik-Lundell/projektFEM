@@ -120,7 +120,7 @@ disp("MAX TEMP: " + max(max(ed)));
 
 %% b) transient heat
 %Run a) to generate a0 with desired initial condition.
-delta_T = 1;
+delta_t = 0.005;
 T_outside = [-96-T_0 20-T_0];
 a = a0;
 
@@ -142,16 +142,31 @@ for ib = 1:length(edges_conv)
 end
 
 %Generate derivate matrix A = rho c int N^T N dV 
-%MEN HUR?????????????????????
+Ae_const = [3 2 2; 2 3 2; 2 2 3]/18;
+for ie = 1:nelm
+    %find coords of element
+    ex = coord(enod(ie,:),1);
+    ey = coord(enod(ie,:),2);
+    
+    Ar = det([[1; 1; 1] ex ey])/2;
+
+    material = emat(ie);
+    Ae = Ae_const*Ar*rho(material)*c_p(material);
+    
+    indx = edof(ie,2:end);  % where to insert Ke
+    A(indx,indx) = K(indx,indx)+Ke;  % insert
+end
 
 % Implicit Euler time step
-time_step = @(a) (A + delta_T*K)\(F*delta_t+A*a);
+time_step = @(a) (A + delta_t*K)\(F*delta_t+A*a);
 
 % Step
-a1 = time_step(a0);
+for i=1:50
+    a = time_step(a);
 
 [ex, ey] = coordxtr(edof, coord, dof, 3);
-ed = extract(edof, a1);
+
+ed = extract(edof, a)+20;
 
 %Plot
 patch(ex',ey',ed','EdgeColor','none');
@@ -160,9 +175,11 @@ patch(ex',-ey',ed','EdgeColor','none');
 
 caxis([0 50]);
 axis([-0.1 1.2 -0.5 0.5]);
-title("Temperature distribution, T_{\infty} = " + (T_outside(0)+T_0) + " [C]");
+title("frame " + i);
 %colormap(cold);
 colorbar;
-xlabel('x-position [m]')
+xlabel('x-position [m]');
 ylabel('y-postition [m]');
+pause(1);
+end
 
