@@ -12,8 +12,6 @@ c_p = containers.Map({TI,GL},{523, 670}); %Specific heat, J/(kg K)
 
 
 %% Extract calfem notation from pdetool-mesh
-load('data.mat');
-
 
 %element data
 enod=t(1:3,:)'; % nodes of elements
@@ -35,7 +33,7 @@ end
 
 % separate edges conv and heat flow
 er = e([1 2 5],:); % Reduced e [2x node number; edge label]
-conv_segments = [2 15 14 23 31,16, 1]; % Segments with convection.
+conv_segments = [2 15 14 23 31, 1]; % Segments with convection.
 edges_conv = [];
 
 for i = 1:size(er,2)
@@ -52,7 +50,7 @@ end
 %Define constants
 T_0 = 20; %base level as T_0 = zero stress.
 T_outside = [40-T_0 20-T_0]; % [T_inf T_c]
-ep = 0.01; % m
+ep = 1; % cm
 
 %allocate memory
 K = zeros(nnod);
@@ -106,7 +104,7 @@ patch(ex',ey',ed','EdgeColor','none');
 hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
-caxis([-100 50]);
+caxis([-100 100]);
 axis([-0.1 1.2 -0.5 0.5]);
 title("Temperature distribution, T_{\infty} = " + (T_outside(1)+T_0) + " [C]");
 %colormap(cold);
@@ -120,14 +118,15 @@ disp("MAX TEMP: " + max(max(ed)));
 
 %% b) transient heat
 %Run a) to generate a0 with desired initial condition.
-delta_t = 0.005;
+delta_t = 20;
 T_outside = [-96-T_0 20-T_0];
-a = a0;
+a = a0-T_0;
 
-%Generate F with new boundary cond.
 A = zeros(nnod);
+A2 = zeros(nnod);
 F = zeros(nnod,1);
 
+%Generate F with new boundary cond.
 fce_const = [1; 1]*alpha_c/2;
 for ib = 1:length(edges_conv)
     %find coordinates of boundary nodes
@@ -142,19 +141,16 @@ for ib = 1:length(edges_conv)
 end
 
 %Generate derivate matrix A = rho c int N^T N dV 
-Ae_const = [3 2 2; 2 3 2; 2 2 3]/18;
 for ie = 1:nelm
     %find coords of element
     ex = coord(enod(ie,:),1);
     ey = coord(enod(ie,:),2);
-    
-    Ar = det([[1; 1; 1] ex ey])/2;
-
+   
     material = emat(ie);
-    Ae = Ae_const*Ar*rho(material)*c_p(material);
+    Ae = plantml(ex',ey',rho(material)*c_p(material));
     
-    indx = edof(ie,2:end);  % where to insert Ke
-    A(indx,indx) = K(indx,indx)+Ke;  % insert
+    indx = edof(ie,2:end);  % where to insert Ae
+    A(indx, indx) = A(indx,indx)+Ae;
 end
 
 % Implicit Euler time step
@@ -173,13 +169,16 @@ patch(ex',ey',ed','EdgeColor','none');
 hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
-caxis([0 50]);
+caxis([-100 100]);
 axis([-0.1 1.2 -0.5 0.5]);
 title("frame " + i);
 %colormap(cold);
 colorbar;
 xlabel('x-position [m]');
 ylabel('y-postition [m]');
-pause(1);
+pause(0.1);
+
+disp("MAX TEMP: " + max(max(ed)));
+disp("MIN TEMP: " + min(min(ed)));
 end
 
