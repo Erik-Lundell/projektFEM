@@ -1,8 +1,17 @@
-%% Extract calfem notation from pdetool-mesh
-load('data.mat');
-
+%% Constants
 TI = 1;
 GL = 0;
+
+D = containers.Map({TI,GL},{eye(2)*17, eye(2)*0.8}); %W/(m K)
+alpha_c = 100; %W/(m^2K)
+
+rho = containers.Map({TI,GL},{4620,3860}); %Density, kg/m^3
+E = containers.Map({TI,GL},{110, 67}); %Young's modulus, GPa
+alpha = containers.Map({TI,GL},{9.4e-6,7e-6}); %Expansion coefficient, 1/K
+c_p = containers.Map({TI,GL},{523, 670}); %Specific heat, J/(kg K)
+
+
+%% Extract calfem notation from pdetool-mesh
 
 %element data
 enod=t(1:3,:)'; % nodes of elements
@@ -24,7 +33,7 @@ end
 
 % separate edges conv and heat flow
 er = e([1 2 5],:); % Reduced e [2x node number; edge label]
-conv_segments = [2 15 14 23 31,16, 1]; % Segments with convection.
+conv_segments = [2 15 14 23 31, 1]; % Segments with convection.
 edges_conv = [];
 
 for i = 1:size(er,2)
@@ -41,13 +50,10 @@ end
 %Define constants
 T_0 = 20; %base level as T_0 = zero stress.
 T_outside = [40-T_0 20-T_0]; % [T_inf T_c]
-ep = 0.01; % m
-
-D = containers.Map({TI,GL},{eye(2)*17, eye(2)*0.8}); %W/(m K)
-alpha_c = 100; %W/(m^2K)
+ep = 1; % cm
 
 %allocate memory
-K = zeros(nnod,nnod);
+K = zeros(nnod);
 F = zeros(nnod,1);
 
 %Basic stiffness matrix
@@ -80,8 +86,8 @@ for ib = 1:length(edges_conv)
     ey = coord(indx,2);
     l = sqrt((ex(1)-ex(2))^2+(ey(1)-ey(2))^2);  %calculate edge length
     
-    material = edges_conv(3,ib)+1;
-    fce = fce_const*l*T_outside(material);
+    convectionTemp = edges_conv(3,ib)+1;
+    fce = fce_const*l*T_outside(convectionTemp);
     Kce = Kce_const*l;
 
     K(indx,indx) = K(indx,indx)+Kce;  % insert
@@ -89,16 +95,16 @@ for ib = 1:length(edges_conv)
 end
 
 %Solve system
-T = solveq(K,F)+T_0;
+a0 = solveq(K,F)+T_0;
 [ex, ey] = coordxtr(edof, coord, dof, 3);
-ed = extract(edof, T);
+ed = extract(edof, a0);
 
 %Plot
 patch(ex',ey',ed','EdgeColor','none');
 hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
-caxis([-100 50]);
+caxis([-100 100]);
 axis([-0.1 1.2 -0.5 0.5]);
 title("Temperature distribution, T_{\infty} = " + (T_outside(1)+T_0) + " [C]");
 %colormap(cold);
@@ -110,4 +116,69 @@ disp("MAX TEMP: " + max(max(ed)));
 %Max T vid T_inf = -96: 19,9769
 %Max T vid T_inf = 40: 40,0093
 
+%% b) transient heat
+%Run a) to generate a0 with desired initial condition.
+delta_t = 20;
+T_outside = [-96-T_0 20-T_0];
+a = a0-T_0;
+
+A = zeros(nnod);
+A2 = zeros(nnod);
+F = zeros(nnod,1);
+
+%Generate F with new boundary cond.
+fce_const = [1; 1]*alpha_c/2;
+for ib = 1:length(edges_conv)
+    %find coordinates of boundary nodes
+    indx = edges_conv(1:2,ib);
+    ex = coord(indx,1);
+    ey = coord(indx,2);
+    l = sqrt((ex(1)-ex(2))^2+(ey(1)-ey(2))^2);  %calculate edge length
+    
+    convectionTemp = edges_conv(3,ib)+1;
+    fce = fce_const*l*T_outside(convectionTemp);
+    F(indx) = F(indx) + fce;
+end
+
+%Generate derivate matrix A = rho c int N^T N dV 
+for ie = 1:nelm
+    %find coords of element
+    ex = coord(enod(ie,:),1);
+    ey = coord(enod(ie,:),2);
+   
+    material = emat(ie);
+    Ae = plantml(ex',ey',rho(material)*c_p(material));
+    
+    indx = edof(ie,2:end);  % where to insert Ae
+    A(indx, indx) = A(indx,indx)+Ae;
+end
+
+% Implicit Euler time step
+time_step = @(a) (A + delta_t*K)\(F*delta_t+A*a);
+
+% Step
+for i=1:50
+    a = time_step(a);
+
+[ex, ey] = coordxtr(edof, coord, dof, 3);
+
+ed = extract(edof, a)+20;
+
+%Plot
+patch(ex',ey',ed','EdgeColor','none');
+hold on
+patch(ex',-ey',ed','EdgeColor','none');
+
+caxis([-100 100]);
+axis([-0.1 1.2 -0.5 0.5]);
+title("frame " + i);
+%colormap(cold);
+colorbar;
+xlabel('x-position [m]');
+ylabel('y-postition [m]');
+pause(0.1);
+
+disp("MAX TEMP: " + max(max(ed)));
+disp("MIN TEMP: " + min(min(ed)));
+end
 
