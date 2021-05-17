@@ -4,12 +4,15 @@ GL = 0;
 
 D = containers.Map({TI,GL},{eye(2)*17, eye(2)*0.8}); %W/(m K)
 alpha_c = 100; %W/(m^2K)
+T_0 = 20; %Celcius, T_0 = zero stress from heat.
 
 rho = containers.Map({TI,GL},{4620,3860}); %Density, kg/m^3
 E = containers.Map({TI,GL},{110, 67}); %Young's modulus, GPa
 alpha = containers.Map({TI,GL},{9.4e-6,7e-6}); %Expansion coefficient, 1/K
 c_p = containers.Map({TI,GL},{523, 670}); %Specific heat, J/(kg K)
+Poisson = containers.Map({TI,GL},{0.34, 0.2}); % Poission's ratio [-]
 
+ep = 1; % cm
 
 %% Extract calfem notation from pdetool-mesh
 
@@ -31,10 +34,13 @@ for ie=1:nelm
     edof(ie,:)=[ie,enod(ie,:)];
 end
 
-% separate edges conv and heat flow
+% separate edges with convection and fixed edges
 er = e([1 2 5],:); % Reduced e [2x node number; edge label]
 conv_segments = [2 15 14 23 31, 1]; % Segments with convection.
 edges_conv = [];
+
+fixed_segments = [21 22 1, 16 17 18 19];
+edges_fixed = [];
 
 for i = 1:size(er,2)
     if ismember(er(3,i),conv_segments)
@@ -42,15 +48,19 @@ for i = 1:size(er,2)
             %convection type = 0 -> T_inf outside
             %convection type = 1 -> T_c outside
     end
+    if ismember(er(3,i),fixed_segments)
+        edges_fixed = [edges_fixed [er(1:2,i);er(3,i)==1]]; % [node labels of convection elements; fixed type]
+            %fixed type = 0 -> u_y = 0
+            %fixed type = 1 -> u_x = 0
+    end
 end
+
 
 % find edges with given heat flow
 
 %% a) Stationary temperature distribution
 %Define constants
-T_0 = 20; %base level as T_0 = zero stress.
-T_outside = [40-T_0 20-T_0]; % [T_inf T_c]
-ep = 1; % cm
+T_outside = [-96 20]; % [T_inf T_c]
 
 %allocate memory
 K = zeros(nnod);
@@ -95,7 +105,7 @@ for ib = 1:length(edges_conv)
 end
 
 %Solve system
-a0 = solveq(K,F)+T_0;
+a0 = solveq(K,F);
 [ex, ey] = coordxtr(edof, coord, dof, 3);
 ed = extract(edof, a0);
 
@@ -104,10 +114,10 @@ patch(ex',ey',ed','EdgeColor','none');
 hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
-caxis([-100 100]);
+caxis([-100 50]);
 axis([-0.1 1.2 -0.5 0.5]);
 title("Temperature distribution, T_{\infty} = " + (T_outside(1)+T_0) + " [C]");
-%colormap(cold);
+%colormap(hot);
 colorbar;
 xlabel('x-position [m]')
 ylabel('y-postition [m]');
@@ -118,12 +128,11 @@ disp("MAX TEMP: " + max(max(ed)));
 
 %% b) transient heat
 %Run a) to generate a0 with desired initial condition.
-delta_t = 20;
-T_outside = [-96-T_0 20-T_0];
-a = a0-T_0;
+delta_t = 100;
+T_outside = [40 20]; %[T_inf T_c]
+a = a0;
 
 A = zeros(nnod);
-A2 = zeros(nnod);
 F = zeros(nnod,1);
 
 %Generate F with new boundary cond.
@@ -157,28 +166,113 @@ end
 time_step = @(a) (A + delta_t*K)\(F*delta_t+A*a);
 
 % Step
-for i=1:50
+%Suggested steps: t= 200 1200 10,000 20,000
+for i=1:200
     a = time_step(a);
+end
 
 [ex, ey] = coordxtr(edof, coord, dof, 3);
 
-ed = extract(edof, a)+20;
+ed = extract(edof, a);
 
 %Plot
 patch(ex',ey',ed','EdgeColor','none');
 hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
-caxis([-100 100]);
+caxis([-100 50]);
 axis([-0.1 1.2 -0.5 0.5]);
-title("frame " + i);
-%colormap(cold);
+title("t = " + (i*delta_t) + " s");
+colormap default;
 colorbar;
 xlabel('x-position [m]');
 ylabel('y-postition [m]');
-pause(0.1);
+%pause(0.1);
 
 disp("MAX TEMP: " + max(max(ed)));
 disp("MIN TEMP: " + min(min(ed)));
+
+
+%% C Mises stress field
+% Plain strain conditions hold -> epsilon = [exx eyy exy]'
+% sigma_zz != 0 
+% Ka = f_b + f_l + f_0
+% K, Stiffness matrix, = int BtDtB dA = D*t*int BtB dA.
+% f_0, initial vector from temperature distribution = t* int_ Bt epsilon_0 dA
+% f_b from know traction at boundaries = 0.
+% f_l = 0 because of no internal load. 
+
+calcD = @(E, v) E/(1+v)*(1-2*v)*[(1-v) v 0; v (1-v) 0; 0 0 (1-2*v)/2];
+D_el = containers.Map({TI,GL},{calcD(E(TI),Poisson(TI)),calcD(E(TI),Poisson(GL))});
+
+calcConstEps_0 = @(E, v) alpha_c*E/(1-2*v)*[1;1;0];
+const_eps0 = containers.Map({TI,GL},{calcConstEps_0(E(TI),Poisson(TI)),calcConstEps_0(E(TI),Poisson(GL))});
+
+%Calculate K and f_0
+K = zeros(nnod*2);
+F = zeros(nnod*2,1);
+
+for ie = 1:nelm
+    ex = coord(enod(ie,:),1)';
+    ey = coord(enod(ie,:),2)';
+    material = emat(ie);
+    
+    Ke = plante(ex, ey, [2 ep], D_el(material));
+    
+    %Absolut inte hundra på detta.
+    ede = ed(ie,:)-T_0; %Hämta temperaturen i elementet beräknad i a)
+    es = [ede(1) ede(1) ede(2) ede(2) ede(3) ede(3)]; %Lika mycket temp strain i varje riktning
+    f_0e = plantf(ex, ey, [2 ep], es); %plantf beräknar int Bt es t dA.
+    
+    %Insert
+    indx = edof_S(ie,2:end);  % where to insert
+    K(indx, indx) = K(indx,indx)+Ke;
+    F(indx) = F(indx) + f_0e;
 end
+
+%Calculate bc, known extrusions. 
+%Koden blir trixig här då jag hämtat ut alla edges som har u = 0 vilket gör
+%att det kan förekomma dubletter av noder.
+
+already_added = zeros(nnod*2,1);
+bc = [];
+for ib = 1:length(edges_fixed)
+    edge = edges_fixed(:,ib);
+    x_or_y = 2-edge(3);
+    
+    node_id = dof_S(edge(1),x_or_y);
+    if(already_added(node_id)==0)
+        bc = [bc; node_id, 0];
+        already_added(node_id) = 1;
+    end
+    
+    node_id = dof_S(edge(2),x_or_y);
+    if(already_added(node_id)==0)
+        bc = [bc; node_id, 0];
+        already_added(node_id) = 1;
+    end
+end
+
+%solve system
+a_S = solveq(K,F, bc);
+[ex_S, ey_S] = coordxtr(edof_S, coord, dof_S, 3);
+ed_S = extract(edof_S, a_S);
+
+%% plot displacements
+mag = 0.005;
+exd = ex_S + mag*ed_S(:,1:2:end);
+eyd = ey_S + mag*ed_S(:,2:2:end);
+
+figure()
+patch(ex_S',ey_S',[0 0 0],"EdgeColor","none","FaceAlpha",0.3);
+hold on
+patch(ex_S',-ey_S',[0 0 0],"EdgeColor","none","FaceAlpha",0.3);
+patch(exd',eyd',[0 0 0],"FaceAlpha",0.3);
+patch(exd',-eyd',[0 0 0],"FaceAlpha",0.3);
+axis equal
+
+% plants beräknar strain när a är känd
+
+%
+
 
