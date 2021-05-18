@@ -22,7 +22,7 @@ nelm = size(enod,1); % number of elements
 emat = (t(4,:)==TI)';  %  Material type of element
 
 %node data
-coord = p';
+coord = p'/100;
 nnod=size(coord,1); % number of nodes
 dof=(1:nnod)'; % dof (degrees of freedom) number is node number
 dof_S=[(1:nnod)',(nnod+1:2*nnod)']; % give each dof a number
@@ -39,7 +39,7 @@ er = e([1 2 5],:); % Reduced e [2x node number; edge label]
 conv_segments = [2 15 14 23 31, 1]; % Segments with convection.
 edges_conv = [];
 
-fixed_segments = [21 22 1, 16 17 18 19];
+fixed_segments = [21 22 1 16 17 18 19 20];
 edges_fixed = [];
 
 for i = 1:size(er,2)
@@ -115,8 +115,8 @@ hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
 caxis([-100 50]);
-axis([-0.1 1.2 -0.5 0.5]);
-title("Temperature distribution, T_{\infty} = " + (T_outside(1)+T_0) + " [C]");
+axis([-0.1 1.2 -0.5 0.5]/100);
+title("Temperature distribution, T_{\infty} = " + (T_outside(1)) + " [C]");
 %colormap(hot);
 colorbar;
 xlabel('x-position [m]')
@@ -129,7 +129,7 @@ disp("MAX TEMP: " + max(max(ed)));
 %% b) transient heat
 %Run a) to generate a0 with desired initial condition.
 delta_t = 100;
-T_outside = [40 20]; %[T_inf T_c]
+T_outside = [-96 20]; %[T_inf T_c]
 a = a0;
 
 A = zeros(nnod);
@@ -202,9 +202,11 @@ disp("MIN TEMP: " + min(min(ed)));
 % f_b from know traction at boundaries = 0.
 % f_l = 0 because of no internal load. 
 
+% Define isotropic D matrix for plane strain (13.35 in book)
 calcD = @(E, v) E/(1+v)*(1-2*v)*[(1-v) v 0; v (1-v) 0; 0 0 (1-2*v)/2];
 D_el = containers.Map({TI,GL},{calcD(E(TI),Poisson(TI)),calcD(E(TI),Poisson(GL))});
 
+% Define constant part of D*epsilon_0 (13.34 in book)
 calcConstEps_0 = @(E, v) alpha_c*E/(1-2*v)*[1;1;0];
 const_eps0 = containers.Map({TI,GL},{calcConstEps_0(E(TI),Poisson(TI)),calcConstEps_0(E(TI),Poisson(GL))});
 
@@ -220,9 +222,9 @@ for ie = 1:nelm
     Ke = plante(ex, ey, [2 ep], D_el(material));
     
     %Absolut inte hundra på detta.
-    ede = ed(ie,:)-T_0; %Hämta temperaturen i elementet beräknad i a)
-    es = [ede(1) ede(1) ede(2) ede(2) ede(3) ede(3)]; %Lika mycket temp strain i varje riktning
-    f_0e = plantf(ex, ey, [2 ep], es); %plantf beräknar int Bt es t dA.
+    dT = mean(ed(ie,:))-T_0; %Hämta delta_T jfrt stressfri i elementet beräknad i a) (medelvärdet av nodernas temperatur)
+    es = const_eps0(material)*dT;
+    f_0e = plantf(ex, ey, [2 ep], es'); %plantf beräknar int Bt es t dA.
     
     %Insert
     indx = edof_S(ie,2:end);  % where to insert
@@ -230,7 +232,7 @@ for ie = 1:nelm
     F(indx) = F(indx) + f_0e;
 end
 
-%Calculate bc, known extrusions. 
+%Calculate bc, known extrusions (=0). 
 %Koden blir trixig här då jag hämtat ut alla edges som har u = 0 vilket gör
 %att det kan förekomma dubletter av noder.
 
@@ -258,12 +260,52 @@ a_S = solveq(K,F, bc);
 [ex_S, ey_S] = coordxtr(edof_S, coord, dof_S, 3);
 ed_S = extract(edof_S, a_S);
 
+%Calculate von Mises stress per element
+Seff_el = zeros(nelm,1);
+for ie = 1: nelm
+    ex = coord(enod(ie,:),1)';
+    ey = coord(enod(ie,:),2)';
+    material = emat(ie);
+    
+    a_index = [dof_S(enod(ie,:), 1) ; dof_S(enod(ie,:), 2)];
+    
+    % Boken har något om temperaturen här också men är osäker på om det
+    % behövs/ hur det skulle fungera?
+    sigma = plants(ex, ey, [2 ep], D_el(material),a_S(a_index)'); % [sigma_xx sigma_yy sigma_xy]
+    sigma_zz = Poisson(material)*(sigma(1) + sigma(2)); % 13.42 i boken
+    
+    vonMisesSquared = sigma*sigma' + sigma_zz^2 - sigma(1)*sigma(2)-sigma(1)*sigma_zz-sigma(2)*sigma_zz+2*sigma(3)^2;
+    Seff_el(ie) = sqrt(vonMisesSquared);
+end
+
+%Calculate von Mieses stress per node (mean of connected elements)
+Seff_nod = zeros(nnod,1);
+for i=1:nnod
+    [c0,c1]=find(edof(:,2:4)==i);
+    Seff_nod(i,1)=sum(Seff_el(c0))/size(c0,1);
+end
+%Extract stress per node to patch format
+eM = extract(edof, Seff_nod);
+
+% Plot stress Field
+patch(ex_S',ey_S',eM','EdgeColor','none');
+hold on
+patch(ex_S',-ey_S',eM','EdgeColor','none');
+
+axis([-0.1 1.2 -0.5 0.5]/100);
+title("Von Mises effective stress field.");
+colormap default;
+colorbar;
+xlabel('x-position [m]');
+ylabel('y-postition [m]');
+
+
 %% plot displacements
-mag = 0.005;
+mag = 0.0000005;
 exd = ex_S + mag*ed_S(:,1:2:end);
 eyd = ey_S + mag*ed_S(:,2:2:end);
 
-figure()
+figure();
 patch(ex_S',ey_S',[0 0 0],"EdgeColor","none","FaceAlpha",0.3);
 hold on
 patch(ex_S',-ey_S',[0 0 0],"EdgeColor","none","FaceAlpha",0.3);
@@ -271,8 +313,5 @@ patch(exd',eyd',[0 0 0],"FaceAlpha",0.3);
 patch(exd',-eyd',[0 0 0],"FaceAlpha",0.3);
 axis equal
 
-% plants beräknar strain när a är känd
-
-%
 
 
