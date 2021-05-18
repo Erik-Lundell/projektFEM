@@ -12,7 +12,7 @@ alpha = containers.Map({TI,GL},{9.4e-6,7e-6}); %Expansion coefficient, 1/K
 c_p = containers.Map({TI,GL},{523, 670}); %Specific heat, J/(kg K)
 Poisson = containers.Map({TI,GL},{0.34, 0.2}); % Poission's ratio [-]
 
-ep = 1; % cm
+thickness = 0.01; % [m]
 
 %% Extract calfem notation from pdetool-mesh
 
@@ -72,7 +72,7 @@ for ie = 1:nelm
     ex = coord(enod(ie,:),1)';
     ey = coord(enod(ie,:),2)';
 
-    Ke = flw2te(ex,ey,ep,D(emat(ie)));
+    Ke = flw2te(ex,ey,thickness,D(emat(ie)));
     
     indx = edof(ie,2:end);  % where to insert Ke
     K(indx,indx) = K(indx,indx)+Ke;  % insert
@@ -110,6 +110,7 @@ a0 = solveq(K,F);
 ed = extract(edof, a0);
 
 %Plot
+clf
 patch(ex',ey',ed','EdgeColor','none');
 hold on
 patch(ex',-ey',ed','EdgeColor','none');
@@ -181,13 +182,12 @@ hold on
 patch(ex',-ey',ed','EdgeColor','none');
 
 caxis([-100 50]);
-axis([-0.1 1.2 -0.5 0.5]);
+axis([-0.1 1.2 -0.5 0.5]/100);
 title("t = " + (i*delta_t) + " s");
 colormap default;
 colorbar;
 xlabel('x-position [m]');
 ylabel('y-postition [m]');
-%pause(0.1);
 
 disp("MAX TEMP: " + max(max(ed)));
 disp("MIN TEMP: " + min(min(ed)));
@@ -207,8 +207,8 @@ calcD = @(E, v) E/(1+v)*(1-2*v)*[(1-v) v 0; v (1-v) 0; 0 0 (1-2*v)/2];
 D_el = containers.Map({TI,GL},{calcD(E(TI),Poisson(TI)),calcD(E(TI),Poisson(GL))});
 
 % Define constant part of D*epsilon_0 (13.34 in book)
-calcConstEps_0 = @(E, v) alpha_c*E/(1-2*v)*[1;1;0];
-const_eps0 = containers.Map({TI,GL},{calcConstEps_0(E(TI),Poisson(TI)),calcConstEps_0(E(TI),Poisson(GL))});
+calcConstEps_0 = @(mat) alpha(mat)*E(mat)/(1-2*Poisson(mat))*[1;1;0];
+const_eps0 = containers.Map({TI,GL},{calcConstEps_0(TI),calcConstEps_0(GL)});
 
 %Calculate K and f_0
 K = zeros(nnod*2);
@@ -219,12 +219,12 @@ for ie = 1:nelm
     ey = coord(enod(ie,:),2)';
     material = emat(ie);
     
-    Ke = plante(ex, ey, [2 ep], D_el(material));
+    Ke = plante(ex, ey, [2 thickness], D_el(material));
     
     %Absolut inte hundra på detta.
     dT = mean(ed(ie,:))-T_0; %Hämta delta_T jfrt stressfri i elementet beräknad i a) (medelvärdet av nodernas temperatur)
     es = const_eps0(material)*dT;
-    f_0e = plantf(ex, ey, [2 ep], es'); %plantf beräknar int Bt es t dA.
+    f_0e = plantf(ex, ey, [2 thickness], es'); %plantf beräknar int Bt es t dA.
     
     %Insert
     indx = edof_S(ie,2:end);  % where to insert
@@ -271,7 +271,7 @@ for ie = 1: nelm
     
     % Boken har något om temperaturen här också men är osäker på om det
     % behövs/ hur det skulle fungera?
-    sigma = plants(ex, ey, [2 ep], D_el(material),a_S(a_index)'); % [sigma_xx sigma_yy sigma_xy]
+    sigma = plants(ex, ey, [2 thickness], D_el(material),a_S(a_index)'); % [sigma_xx sigma_yy sigma_xy]
     sigma_zz = Poisson(material)*(sigma(1) + sigma(2)); % 13.42 i boken
     
     vonMisesSquared = sigma*sigma' + sigma_zz^2 - sigma(1)*sigma(2)-sigma(1)*sigma_zz-sigma(2)*sigma_zz+2*sigma(3)^2;
@@ -301,7 +301,7 @@ ylabel('y-postition [m]');
 
 
 %% plot displacements
-mag = 0.0000005;
+mag = 5;
 exd = ex_S + mag*ed_S(:,1:2:end);
 eyd = ey_S + mag*ed_S(:,2:2:end);
 
