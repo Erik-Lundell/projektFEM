@@ -25,7 +25,7 @@ emat = (t(4,:)==TI)';  %  Material type of element
 coord = p'/100;
 nnod=size(coord,1); % number of nodes
 dof=(1:nnod)'; % dof (degrees of freedom) number is node number
-dof_S=[(1:nnod)',(nnod+1:2*nnod)']; % give each dof a number
+dof_S=[(1:nnod)',(nnod+1:2*nnod)']; % [dof_x dof_y]
 edof_S = zeros(nelm, 7);   
 edof = zeros(nelm,4);   %Element degrees of freedom
 
@@ -42,14 +42,15 @@ edges_conv = [];
 fixed_segments = [21 22 1 16 17 18 19 20];
 edges_fixed = [];
 
+rightmost_boundary = 1;
 for i = 1:size(er,2)
     if ismember(er(3,i),conv_segments)
-        edges_conv = [edges_conv [er(1:2,i);er(3,i)==1]]; % [node labels of convection elements;convection type]
+        edges_conv = [edges_conv [er(1:2,i);er(3,i)==rightmost_boundary]]; % [node labels of convection elements;convection type]
             %convection type = 0 -> T_inf outside
             %convection type = 1 -> T_c outside
     end
     if ismember(er(3,i),fixed_segments)
-        edges_fixed = [edges_fixed [er(1:2,i);er(3,i)==1]]; % [node labels of convection elements; fixed type]
+        edges_fixed = [edges_fixed [er(1:2,i);er(3,i)==rightmost_boundary]]; % [node labels of convection elements; fixed type]
             %fixed type = 0 -> u_y = 0
             %fixed type = 1 -> u_x = 0
     end
@@ -208,7 +209,7 @@ D_el = containers.Map({TI,GL},{calcD(E(TI),Poisson(TI)),calcD(E(TI),Poisson(GL))
 
 % Define constant part of D*epsilon_0 (13.34 in book)
 calcConstEps_0 = @(mat) alpha(mat)*E(mat)/(1-2*Poisson(mat))*[1;1;0];
-const_eps0 = containers.Map({TI,GL},{calcConstEps_0(TI),calcConstEps_0(GL)});
+const_Deps0 = containers.Map({TI,GL},{calcConstEps_0(TI),calcConstEps_0(GL)});
 
 %Calculate K and f_0
 K = zeros(nnod*2);
@@ -221,10 +222,9 @@ for ie = 1:nelm
     
     Ke = plante(ex, ey, [2 thickness], D_el(material));
     
-    %Absolut inte hundra på detta.
-    dT = mean(ed(ie,:))-T_0; %Hämta delta_T jfrt stressfri i elementet beräknad i a) (medelvärdet av nodernas temperatur)
-    es = const_eps0(material)*dT;
-    f_0e = plantf(ex, ey, [2 thickness], es'); %plantf beräknar int Bt es t dA.
+    dT = mean(ed(ie,:))-T_0; %Mean temperature in element. 
+    es = const_Deps0(material)*dT;
+    f_0e = plantf(ex, ey, [2 thickness], es'); %calculate int Bt es t dA.
     
     %Insert
     indx = edof_S(ie,2:end);  % where to insert
@@ -266,13 +266,17 @@ for ie = 1: nelm
     ex = coord(enod(ie,:),1)';
     ey = coord(enod(ie,:),2)';
     material = emat(ie);
+    dT = mean(ed(ie,:))-T_0; % Mean temperature in element.
     
     a_index = [dof_S(enod(ie,:), 1) ; dof_S(enod(ie,:), 2)];
     
     % Boken har något om temperaturen här också men är osäker på om det
     % behövs/ hur det skulle fungera?
-    sigma = plants(ex, ey, [2 thickness], D_el(material),a_S(a_index)'); % [sigma_xx sigma_yy sigma_xy]
-    sigma_zz = Poisson(material)*(sigma(1) + sigma(2)); % 13.42 i boken
+    sigma1 = plants(ex, ey, [2 thickness], D_el(material),a_S(a_index)'); % [sigma_xx sigma_yy sigma_xy]
+    sigma = sigma1 - (const_Deps0(material)*dT)';
+    
+    sigma_zz1 = Poisson(material)*(sigma(1) + sigma(2)); % 13.42 i boken
+    sigma_zz = sigma_zz1 - alpha(material)*E(material)*dT/(1-2*Poisson(material)); %13.42 i boken
     
     vonMisesSquared = sigma*sigma' + sigma_zz^2 - sigma(1)*sigma(2)-sigma(1)*sigma_zz-sigma(2)*sigma_zz+2*sigma(3)^2;
     Seff_el(ie) = sqrt(vonMisesSquared);
@@ -298,6 +302,29 @@ colormap default;
 colorbar;
 xlabel('x-position [m]');
 ylabel('y-postition [m]');
+
+%% d) Calculate total lens displacement.
+
+lens_subdomain = 3;
+lens_displacement = 0;
+
+for ie = 1:nelm
+    %If element is within lens subdomain
+    if(t(4,ie)==lens_subdomain)
+        ex = coord(enod(ie,:),1)';
+        ey = coord(enod(ie,:),2)';
+        
+        %Calculate NtN
+        T = NtN(ex, ey,thickness);
+        u_x = a_S(edof_S(ie,2:4));
+        u_y = a_S(edof_S(ie,5:7));
+        
+        lens_displacement = lens_displacement + u_x'*T*u_x + u_y'*T*u_y;
+    end
+end
+
+disp("TOTAL LENS DISPLACEMENT: " + lens_displacement);
+
 
 
 %% plot displacements
