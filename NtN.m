@@ -29,8 +29,6 @@ for i=1:3
 		  		0 L3(i)*L1(i) 0 L3(i)*L2(i) 0 L3(i)^2];
 end
 
-Te1=NtN*Area*t;
-
-
-Te=Te1([1 3 5],[1 3 5]);       
+Te=NtN*Area*t;
+     
 

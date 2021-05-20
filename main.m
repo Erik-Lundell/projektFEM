@@ -61,7 +61,7 @@ end
 
 %% a) Stationary temperature distribution
 %Define constants
-T_outside = [-96 20]; % [T_inf T_c]
+T_outside = [40 20]; % [T_inf T_c]
 
 %allocate memory
 K = zeros(nnod);
@@ -273,7 +273,7 @@ for ie = 1: nelm
     % Boken har något om temperaturen här också men är osäker på om det
     % behövs/ hur det skulle fungera?
     sigma1 = plants(ex, ey, [2 thickness], D_el(material),a_S(a_index)'); % [sigma_xx sigma_yy sigma_xy]
-    sigma = sigma1 - (const_Deps0(material)*dT)';
+    sigma =  sigma1 - (const_Deps0(material)*dT)';
     
     sigma_zz1 = Poisson(material)*(sigma(1) + sigma(2)); % 13.42 i boken
     sigma_zz = sigma_zz1 - alpha(material)*E(material)*dT/(1-2*Poisson(material)); %13.42 i boken
@@ -318,8 +318,9 @@ for ie = 1:nelm
         T = NtN(ex, ey,thickness);
         u_x = a_S(edof_S(ie,2:4));
         u_y = a_S(edof_S(ie,5:7));
+        u = [u_x; u_y];
         
-        lens_displacement = lens_displacement + u_x'*T*u_x + u_y'*T*u_y;
+        lens_displacement = lens_displacement + u'*T*u;
     end
 end
 
@@ -328,7 +329,7 @@ disp("TOTAL LENS DISPLACEMENT: " + lens_displacement);
 
 
 %% plot displacements
-mag = 5;
+mag = 10;
 exd = ex_S + mag*ed_S(:,1:2:end);
 eyd = ey_S + mag*ed_S(:,2:2:end);
 
@@ -339,6 +340,10 @@ patch(ex_S',-ey_S',[0 0 0],"EdgeColor","none","FaceAlpha",0.3);
 patch(exd',eyd',[0 0 0],"FaceAlpha",0.3);
 patch(exd',-eyd',[0 0 0],"FaceAlpha",0.3);
 axis equal
+
+xlabel('x-position [m]');
+ylabel('y-postition [m]');
+title("Node displacements (magnified x10)");
 
 
 
